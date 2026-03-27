@@ -1,0 +1,54 @@
+services:
+
+  # ── MySQL Readonly MCP Server ─────────────────────────────────────────────
+  mysql-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mysql-mcp-server:latest
+    container_name: mysql-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-8000}:8000"
+    environment:
+      # MySQL connection — override with a .env file or shell environment
+      MYSQL_HOST: "${MYSQL_HOST:-host.docker.internal}"
+      MYSQL_PORT: "${MYSQL_PORT:-3306}"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE}"
+      MYSQL_CONNECT_TIMEOUT: "${MYSQL_CONNECT_TIMEOUT:-10}"
+      MYSQL_SSL: "${MYSQL_SSL:-false}"
+      QUERY_DEFAULT_LIMIT: "${QUERY_DEFAULT_LIMIT:-100}"
+      # SSE bind settings (inside the container, always bind 0.0.0.0:8000)
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8000"
+    # Uncomment if MySQL runs as another Docker service in the same compose file:
+    # depends_on:
+    #   mysql:
+    #     condition: service_healthy
+
+  # ── Optional: local MySQL for development / testing ───────────────────────
+  # Uncomment this service to spin up a local MySQL alongside the MCP server.
+  #
+  # mysql:
+  #   image: mysql:8.4
+  #   container_name: mysql-dev
+  #   restart: unless-stopped
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: rootpassword
+  #     MYSQL_DATABASE: mydb
+  #     MYSQL_USER: mcpuser
+  #     MYSQL_PASSWORD: mcppassword
+  #   ports:
+  #     - "3306:3306"
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "--password=rootpassword"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+# volumes:
+#   mysql_data:
