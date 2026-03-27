@@ -300,4 +300,14 @@ The following improvements are recommended before production use:
 - **Audit logging** — log every executed query with timestamp, client identity, and row count
 - **Row-level rate limiting** — enforce per-client query frequency limits
 - **mTLS / auth** — add token authentication to the SSE endpoint
-# mysql-mcp-only-read
+
+---
+
+## License
+
+This project is licensed under the Apache License 2.0. See `LICENSE`.
+
+Forking and secondary development are allowed, but attribution is required:
+- Keep the original copyright notice.
+- Keep `NOTICE` (or provide an equivalent attribution notice).
+- Clearly credit the original author: `IBeanCN`.
