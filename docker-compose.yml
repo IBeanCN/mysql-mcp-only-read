@@ -8,8 +8,11 @@ services:
     image: mysql-mcp-server:latest
     container_name: mysql-mcp-server
     restart: unless-stopped
-    ports:
-      - "${MCP_PORT:-8000}:8000"
+    # Port mapping is commented out by default.
+    # For production, place a TLS-terminating reverse proxy (nginx/caddy/traefik)
+    # in front and set MCP_BEARER_TOKEN. Only expose directly for local dev:
+    #   ports:
+    #     - "127.0.0.1:${MCP_PORT:-8000}:8000"
     environment:
       # MySQL connection — override with a .env file or shell environment
       MYSQL_HOST: "${MYSQL_HOST:-host.docker.internal}"
@@ -18,9 +21,18 @@ services:
       MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
       MYSQL_DATABASE: "${MYSQL_DATABASE}"
       MYSQL_CONNECT_TIMEOUT: "${MYSQL_CONNECT_TIMEOUT:-10}"
+      MYSQL_READ_TIMEOUT: "${MYSQL_READ_TIMEOUT:-30}"
+      MYSQL_WRITE_TIMEOUT: "${MYSQL_WRITE_TIMEOUT:-30}"
+      MYSQL_MAX_EXECUTION_TIME: "${MYSQL_MAX_EXECUTION_TIME:-30000}"
       MYSQL_SSL: "${MYSQL_SSL:-false}"
+      MYSQL_SSL_CA: "${MYSQL_SSL_CA:-}"
+      MYSQL_SSL_CERT: "${MYSQL_SSL_CERT:-}"
+      MYSQL_SSL_KEY: "${MYSQL_SSL_KEY:-}"
+      MYSQL_SSL_VERIFY_CERT: "${MYSQL_SSL_VERIFY_CERT:-true}"
       QUERY_DEFAULT_LIMIT: "${QUERY_DEFAULT_LIMIT:-100}"
-      # SSE bind settings (inside the container, always bind 0.0.0.0:8000)
+      QUERY_TABLE_BLACKLIST: "${QUERY_TABLE_BLACKLIST:-}"
+      MCP_BEARER_TOKEN: "${MCP_BEARER_TOKEN}"
+      # Inside the container the SSE server must bind all interfaces
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8000"
     # Uncomment if MySQL runs as another Docker service in the same compose file:

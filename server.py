@@ -9,23 +9,32 @@ Configuration is passed via environment variables, which are set through the `en
 section of mcp.json for stdio transport, or via shell environment for HTTP/SSE mode.
 
 Environment Variables:
-    MYSQL_HOST              MySQL server hostname          (default: 127.0.0.1)
-    MYSQL_PORT              MySQL server port              (default: 3306)
-    MYSQL_USER              MySQL username                 (required)
-    MYSQL_PASSWORD          MySQL password                 (default: "")
-    MYSQL_DATABASE          Target database name           (required)
-    MYSQL_CONNECT_TIMEOUT   Connection timeout in seconds  (default: 10)
-    MYSQL_SSL               Enable SSL: "true"/"false"     (default: false)
-    QUERY_DEFAULT_LIMIT     Default row limit for SELECT   (default: 100)
-    QUERY_TABLE_BLACKLIST   Comma-separated table blacklist (default: "")
-    MCP_HOST                Bind host for SSE transport    (default: 0.0.0.0)
-    MCP_PORT                Bind port for SSE transport    (default: 8000)
+    MYSQL_HOST                  MySQL server hostname              (default: 127.0.0.1)
+    MYSQL_PORT                  MySQL server port                  (default: 3306)
+    MYSQL_USER                  MySQL username                     (required)
+    MYSQL_PASSWORD              MySQL password                     (default: "")
+    MYSQL_DATABASE              Target database name               (required)
+    MYSQL_CONNECT_TIMEOUT       Connection timeout in seconds      (default: 10)
+    MYSQL_READ_TIMEOUT          Socket read timeout in seconds     (default: 30)
+    MYSQL_WRITE_TIMEOUT         Socket write timeout in seconds    (default: 30)
+    MYSQL_MAX_EXECUTION_TIME    Per-query execution limit (ms)     (default: 30000)
+    MYSQL_SSL                   Enable SSL: "true"/"false"         (default: false)
+    MYSQL_SSL_CA                Path to CA certificate file        (default: "")
+    MYSQL_SSL_CERT              Path to client certificate file    (default: "")
+    MYSQL_SSL_KEY               Path to client key file            (default: "")
+    MYSQL_SSL_VERIFY_CERT       Verify server certificate          (default: true)
+    QUERY_DEFAULT_LIMIT         Default row limit for SELECT       (default: 100)
+    QUERY_TABLE_BLACKLIST       Comma-separated table blacklist    (default: "")
+    MCP_HOST                    Bind host for SSE transport        (default: 127.0.0.1)
+    MCP_PORT                    Bind port for SSE transport        (default: 8000)
+    MCP_BEARER_TOKEN            Static Bearer token for SSE auth   (default: "", disabled)
 """
 
 import argparse
 import json
 import os
 import re
+import secrets
 import sys
 from typing import Any
 
@@ -41,12 +50,20 @@ MYSQL_USER: str = os.environ.get("MYSQL_USER", "")
 MYSQL_PASSWORD: str = os.environ.get("MYSQL_PASSWORD", "")
 MYSQL_DATABASE: str = os.environ.get("MYSQL_DATABASE", "")
 MYSQL_CONNECT_TIMEOUT: int = int(os.environ.get("MYSQL_CONNECT_TIMEOUT", "10"))
+MYSQL_READ_TIMEOUT: int = int(os.environ.get("MYSQL_READ_TIMEOUT", "30"))
+MYSQL_WRITE_TIMEOUT: int = int(os.environ.get("MYSQL_WRITE_TIMEOUT", "30"))
+MYSQL_MAX_EXECUTION_TIME: int = int(os.environ.get("MYSQL_MAX_EXECUTION_TIME", "30000"))
 MYSQL_SSL: bool = os.environ.get("MYSQL_SSL", "false").strip().lower() == "true"
+MYSQL_SSL_CA: str = os.environ.get("MYSQL_SSL_CA", "")
+MYSQL_SSL_CERT: str = os.environ.get("MYSQL_SSL_CERT", "")
+MYSQL_SSL_KEY: str = os.environ.get("MYSQL_SSL_KEY", "")
+MYSQL_SSL_VERIFY_CERT: bool = os.environ.get("MYSQL_SSL_VERIFY_CERT", "true").strip().lower() != "false"
 QUERY_DEFAULT_LIMIT: int = int(os.environ.get("QUERY_DEFAULT_LIMIT", "100"))
 QUERY_TABLE_BLACKLIST_RAW: str = os.environ.get("QUERY_TABLE_BLACKLIST", "")
 
-MCP_HOST: str = os.environ.get("MCP_HOST", "0.0.0.0")
+MCP_HOST: str = os.environ.get("MCP_HOST", "127.0.0.1")
 MCP_PORT: int = int(os.environ.get("MCP_PORT", "8000"))
+MCP_BEARER_TOKEN: str = os.environ.get("MCP_BEARER_TOKEN", "")
 
 # ── MCP Server ────────────────────────────────────────────────────────────────
 
@@ -101,6 +118,15 @@ _FORBIDDEN_PATTERNS: list[re.Pattern[str]] = [
 
 # Simple identifier: letters, digits, underscores only
 _IDENTIFIER_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_]+$")
+
+# Captures the row-count part of any LIMIT clause:
+#   LIMIT n           → group(1)=None  group(2)=n
+#   LIMIT offset, n   → group(1)=offset group(2)=n
+#   LIMIT n OFFSET m  → group(1)=None  group(2)=n
+_LIMIT_RE: re.Pattern[str] = re.compile(
+    r"\bLIMIT\s+(?:(\d+)\s*,\s*)?(\d+)",
+    re.IGNORECASE,
+)
 _FROM_JOIN_RE: re.Pattern[str] = re.compile(
     r"\b(?:FROM|JOIN)\s+`?([A-Za-z0-9_]+)`?(?:\s*\.\s*`?([A-Za-z0-9_]+)`?)?",
     re.IGNORECASE,
@@ -164,6 +190,30 @@ def validate_identifier(name: str, label: str = "identifier") -> None:
             f"Invalid {label} '{name}': "
             "only letters, digits, and underscores are allowed."
         )
+
+
+def _enforce_select_limit(sql: str, max_rows: int) -> str:
+    """Ensure SELECT queries never exceed max_rows, even when the caller
+    explicitly provides a LIMIT clause.
+
+    - If a LIMIT clause exists and its row-count exceeds max_rows, the
+      row-count is silently capped.
+    - If no LIMIT clause exists, ``LIMIT {max_rows}`` is appended.
+    - Non-SELECT statements are returned unchanged.
+    """
+    if not sql.strip().upper().startswith("SELECT"):
+        return sql
+
+    match = _LIMIT_RE.search(sql)
+    if match:
+        row_count = int(match.group(2))
+        if row_count > max_rows:
+            # Replace only the row-count digit sequence, preserving offset
+            start, end = match.span(2)
+            sql = sql[:start] + str(max_rows) + sql[end:]
+    else:
+        sql = sql.rstrip("; \t\n") + f" LIMIT {max_rows}"
+    return sql
 
 
 def _parse_table_blacklist(raw: str) -> frozenset[str]:
@@ -248,6 +298,8 @@ def _get_connection() -> pymysql.Connection:
     """Open and return a new MySQL connection.
 
     Raises RuntimeError if required configuration is missing.
+    Applies read/write socket timeouts and sets MAX_EXECUTION_TIME for the
+    session so runaway queries are killed server-side.
     """
     if not MYSQL_USER or not MYSQL_DATABASE:
         raise RuntimeError(
@@ -263,11 +315,26 @@ def _get_connection() -> pymysql.Connection:
         "password": MYSQL_PASSWORD,
         "database": MYSQL_DATABASE,
         "connect_timeout": MYSQL_CONNECT_TIMEOUT,
+        "read_timeout": MYSQL_READ_TIMEOUT,
+        "write_timeout": MYSQL_WRITE_TIMEOUT,
+        # Enforce server-side execution time limit (milliseconds)
+        "init_command": f"SET SESSION MAX_EXECUTION_TIME = {MYSQL_MAX_EXECUTION_TIME}",
         "cursorclass": pymysql.cursors.DictCursor,
         "charset": "utf8mb4",
     }
+
     if MYSQL_SSL:
-        kwargs["ssl"] = {}
+        ssl_opts: dict[str, Any] = {}
+        if MYSQL_SSL_CA:
+            ssl_opts["ca"] = MYSQL_SSL_CA
+        if MYSQL_SSL_CERT:
+            ssl_opts["cert"] = MYSQL_SSL_CERT
+        if MYSQL_SSL_KEY:
+            ssl_opts["key"] = MYSQL_SSL_KEY
+        if not MYSQL_SSL_VERIFY_CERT:
+            ssl_opts["verify_cert"] = False
+            ssl_opts["verify_identity"] = False
+        kwargs["ssl"] = ssl_opts
 
     return pymysql.connect(**kwargs)
 
@@ -293,13 +360,7 @@ def query(sql: str, limit: int = QUERY_DEFAULT_LIMIT) -> dict[str, Any]:
     validate_table_blacklist_for_sql(sql)
 
     effective_limit = min(max(1, limit), QUERY_DEFAULT_LIMIT)
-
-    # Auto-append LIMIT to bare SELECT queries
-    upper_stripped = sql.strip().upper()
-    if upper_stripped.startswith("SELECT") and not re.search(
-        r"\bLIMIT\b", upper_stripped
-    ):
-        sql = sql.rstrip("; \t\n") + f" LIMIT {effective_limit}"
+    sql = _enforce_select_limit(sql, effective_limit)
 
     conn = _get_connection()
     try:
@@ -413,6 +474,9 @@ Examples:
     args = parser.parse_args()
 
     if args.transport == "sse":
+        import anyio
+        import uvicorn
+
         print(
             f"[mysql-mcp] Starting SSE server on http://{args.host}:{args.port}/sse",
             file=sys.stderr,
@@ -421,9 +485,82 @@ Examples:
             f"[mysql-mcp] MySQL: {MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}",
             file=sys.stderr,
         )
+        if MCP_BEARER_TOKEN:
+            print("[mysql-mcp] Bearer token authentication: enabled", file=sys.stderr)
+        else:
+            print(
+                "[mysql-mcp] WARNING: MCP_BEARER_TOKEN is not set — "
+                "the SSE endpoint is unauthenticated. "
+                "Set MCP_BEARER_TOKEN or restrict access via a reverse proxy.",
+                file=sys.stderr,
+            )
+
         mcp.settings.host = args.host
         mcp.settings.port = args.port
-        mcp.run(transport="sse")
+
+        sse_app = mcp.sse_app()
+
+        if MCP_BEARER_TOKEN:
+            _token_bytes = MCP_BEARER_TOKEN.encode("utf-8")
+
+            class _BearerAuthMiddleware:
+                """Pure-ASGI Bearer token gate — wraps the FastMCP SSE app."""
+
+                def __init__(self, app: Any) -> None:
+                    self._app = app
+
+                async def __call__(
+                    self, scope: Any, receive: Any, send: Any
+                ) -> None:
+                    if scope["type"] in ("http", "websocket"):
+                        headers = dict(scope.get("headers", []))
+                        raw_auth: bytes = headers.get(b"authorization", b"")
+                        auth = raw_auth.decode("utf-8", errors="replace")
+                        token = auth[7:] if auth.startswith("Bearer ") else ""
+                        if not secrets.compare_digest(
+                            token.encode("utf-8"), _token_bytes
+                        ):
+                            if scope["type"] == "http":
+                                body = json.dumps(
+                                    {
+                                        "error": {
+                                            "code": "UNAUTHORIZED",
+                                            "message_en": "Invalid or missing Bearer token.",
+                                            "message_zh": "Bearer Token 无效或缺失。",
+                                        }
+                                    },
+                                    ensure_ascii=False,
+                                ).encode("utf-8")
+                                await send(
+                                    {
+                                        "type": "http.response.start",
+                                        "status": 401,
+                                        "headers": [
+                                            [b"content-type", b"application/json"],
+                                            [b"content-length", str(len(body)).encode()],
+                                            [b"www-authenticate", b'Bearer realm="mysql-mcp"'],
+                                        ],
+                                    }
+                                )
+                                await send(
+                                    {"type": "http.response.body", "body": body}
+                                )
+                            return
+                    await self._app(scope, receive, send)
+
+            sse_app = _BearerAuthMiddleware(sse_app)
+
+        async def _run() -> None:
+            config = uvicorn.Config(
+                sse_app,
+                host=args.host,
+                port=args.port,
+                log_level="info",
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
+
+        anyio.run(_run)
     else:
         mcp.run(transport="stdio")
 
