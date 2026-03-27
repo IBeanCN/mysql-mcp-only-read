@@ -51,7 +51,8 @@ Claude Desktop `claude_desktop_config.json`, or a project-level `.cursor/mcp.jso
         "MYSQL_DATABASE": "your_database_name",
         "MYSQL_CONNECT_TIMEOUT": "10",
         "MYSQL_SSL": "false",
-        "QUERY_DEFAULT_LIMIT": "100"
+        "QUERY_DEFAULT_LIMIT": "100",
+        "QUERY_TABLE_BLACKLIST": "sensitive_table,internal_audit_log"
       }
     }
   }
@@ -102,6 +103,7 @@ Then point your MCP client at the SSE endpoint:
 | `MYSQL_CONNECT_TIMEOUT`| No       | `10`        | Connection timeout in seconds                    |
 | `MYSQL_SSL`            | No       | `false`     | Enable SSL: `"true"` or `"false"`                |
 | `QUERY_DEFAULT_LIMIT`  | No       | `100`       | Max rows returned per SELECT (server-side cap)   |
+| `QUERY_TABLE_BLACKLIST`| No       | `""`        | Comma-separated blocked table names for `query`/`describe_table` |
 | `MCP_HOST`             | No       | `0.0.0.0`   | Bind host for SSE transport                      |
 | `MCP_PORT`             | No       | `8000`      | Bind port for SSE transport                      |
 
@@ -176,6 +178,8 @@ The server enforces readonly access at the application layer with a two-stage gu
    semicolon) is rejected.
 4. **Identifier validation** — table names passed to `describe_table` are validated to contain
    only `[A-Za-z0-9_]` characters before being interpolated into the query.
+5. **Table blacklist** — if a referenced table is in `QUERY_TABLE_BLACKLIST`, the server rejects
+   the request and returns a bilingual structured error payload (English/Chinese).
 
 > For production use, also configure the MySQL user with `SELECT`-only privileges at the
 > database level as an additional layer of defense.

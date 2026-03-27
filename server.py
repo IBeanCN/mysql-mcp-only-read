@@ -17,11 +17,13 @@ Environment Variables:
     MYSQL_CONNECT_TIMEOUT   Connection timeout in seconds  (default: 10)
     MYSQL_SSL               Enable SSL: "true"/"false"     (default: false)
     QUERY_DEFAULT_LIMIT     Default row limit for SELECT   (default: 100)
+    QUERY_TABLE_BLACKLIST   Comma-separated table blacklist (default: "")
     MCP_HOST                Bind host for SSE transport    (default: 0.0.0.0)
     MCP_PORT                Bind port for SSE transport    (default: 8000)
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -41,6 +43,7 @@ MYSQL_DATABASE: str = os.environ.get("MYSQL_DATABASE", "")
 MYSQL_CONNECT_TIMEOUT: int = int(os.environ.get("MYSQL_CONNECT_TIMEOUT", "10"))
 MYSQL_SSL: bool = os.environ.get("MYSQL_SSL", "false").strip().lower() == "true"
 QUERY_DEFAULT_LIMIT: int = int(os.environ.get("QUERY_DEFAULT_LIMIT", "100"))
+QUERY_TABLE_BLACKLIST_RAW: str = os.environ.get("QUERY_TABLE_BLACKLIST", "")
 
 MCP_HOST: str = os.environ.get("MCP_HOST", "0.0.0.0")
 MCP_PORT: int = int(os.environ.get("MCP_PORT", "8000"))
@@ -52,7 +55,9 @@ mcp = FastMCP(
     instructions=(
         "Provides readonly access to a MySQL database. "
         "Only SELECT, SHOW, DESCRIBE, DESC, and EXPLAIN statements are permitted. "
-        "Available tools: query, list_tables, describe_table."
+        "Available tools: query, list_tables, describe_table. "
+        "Blacklisted tables (QUERY_TABLE_BLACKLIST) allow structure inspection via "
+        "describe_table only; data queries against them are blocked."
     ),
 )
 
@@ -96,6 +101,19 @@ _FORBIDDEN_PATTERNS: list[re.Pattern[str]] = [
 
 # Simple identifier: letters, digits, underscores only
 _IDENTIFIER_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_]+$")
+_FROM_JOIN_RE: re.Pattern[str] = re.compile(
+    r"\b(?:FROM|JOIN)\s+`?([A-Za-z0-9_]+)`?(?:\s*\.\s*`?([A-Za-z0-9_]+)`?)?",
+    re.IGNORECASE,
+)
+_DESCRIBE_RE: re.Pattern[str] = re.compile(
+    r"^\s*(?:DESCRIBE|DESC)\s+`?([A-Za-z0-9_]+)`?(?:\s*\.\s*`?([A-Za-z0-9_]+)`?)?",
+    re.IGNORECASE,
+)
+_SHOW_TABLE_TARGET_RE: re.Pattern[str] = re.compile(
+    r"^\s*SHOW\s+(?:COLUMNS|FIELDS|INDEX|INDEXES|KEYS|CREATE\s+TABLE)\s+"
+    r"(?:FROM|IN)\s+`?([A-Za-z0-9_]+)`?(?:\s*\.\s*`?([A-Za-z0-9_]+)`?)?",
+    re.IGNORECASE,
+)
 
 
 def validate_readonly_sql(sql: str) -> None:
@@ -148,6 +166,82 @@ def validate_identifier(name: str, label: str = "identifier") -> None:
         )
 
 
+def _parse_table_blacklist(raw: str) -> frozenset[str]:
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    for name in values:
+        validate_identifier(name, "blacklisted table name")
+    return frozenset(name.lower() for name in values)
+
+
+QUERY_TABLE_BLACKLIST: frozenset[str] = _parse_table_blacklist(
+    QUERY_TABLE_BLACKLIST_RAW
+)
+
+
+def _bilingual_error_payload(
+    code: str, message_en: str, message_zh: str, **extra: Any
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message_en": message_en,
+            "message_zh": message_zh,
+        }
+    }
+    payload["error"].update(extra)
+    return payload
+
+
+def _extract_referenced_tables(sql: str) -> set[str]:
+    tables: set[str] = set()
+
+    for match in _FROM_JOIN_RE.finditer(sql):
+        table = match.group(2) or match.group(1)
+        if table:
+            tables.add(table.lower())
+
+    describe_match = _DESCRIBE_RE.match(sql)
+    if describe_match:
+        table = describe_match.group(2) or describe_match.group(1)
+        if table:
+            tables.add(table.lower())
+
+    show_match = _SHOW_TABLE_TARGET_RE.match(sql)
+    if show_match:
+        table = show_match.group(2) or show_match.group(1)
+        if table:
+            tables.add(table.lower())
+
+    return tables
+
+
+def validate_table_blacklist_for_sql(sql: str) -> None:
+    if not QUERY_TABLE_BLACKLIST:
+        return
+
+    blocked_tables = sorted(
+        table
+        for table in _extract_referenced_tables(sql)
+        if table in QUERY_TABLE_BLACKLIST
+    )
+    if blocked_tables:
+        raise ValueError(
+            json.dumps(
+                _bilingual_error_payload(
+                    code="TABLE_DATA_BLOCKED",
+                    message_en=(
+                        "Data query on blacklisted table(s) is not allowed. "
+                        "Use the describe_table tool to view the table structure."
+                    ),
+                    message_zh="黑名单中的表禁止查询数据，如需查看表结构请使用 describe_table 工具。",
+                    blocked_tables=blocked_tables,
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+
+
 # ── MySQL Connection ───────────────────────────────────────────────────────────
 
 def _get_connection() -> pymysql.Connection:
@@ -196,6 +290,7 @@ def query(sql: str, limit: int = QUERY_DEFAULT_LIMIT) -> dict[str, Any]:
             row_count – number of rows returned
     """
     validate_readonly_sql(sql)
+    validate_table_blacklist_for_sql(sql)
 
     effective_limit = min(max(1, limit), QUERY_DEFAULT_LIMIT)
 
@@ -256,6 +351,8 @@ def describe_table(table_name: str) -> dict[str, Any]:
 
     Args:
         table_name: Name of the table (letters, digits, underscores only).
+                    Blacklisted tables are permitted here — structure inspection
+                    is always allowed even when data queries are blocked.
 
     Returns:
         dict with keys:

@@ -44,7 +44,8 @@ MySQL 连接参数通过 MCP 配置文件注入。根据客户端场景选择以
         "MYSQL_DATABASE": "your_database_name",
         "MYSQL_CONNECT_TIMEOUT": "10",
         "MYSQL_SSL": "false",
-        "QUERY_DEFAULT_LIMIT": "100"
+        "QUERY_DEFAULT_LIMIT": "100",
+        "QUERY_TABLE_BLACKLIST": "sensitive_table,internal_audit_log"
       }
     }
   }
@@ -114,6 +115,7 @@ python server.py --transport sse --host 0.0.0.0 --port 8000
 2. 黑名单：拒绝 `INSERT`、`UPDATE`、`DELETE`、`DROP`、`ALTER` 等危险语句。
 3. 多语句拦截：拒绝注入式多语句执行。
 4. 标识符校验：`describe_table` 的表名会做合法性校验。
+5. 查询表黑名单：若请求涉及 `QUERY_TABLE_BLACKLIST` 中的表，将直接拒绝，并返回中英双语结构化错误信息。
 
 建议在 MySQL 层面同时使用只读账号，形成双重保障。
 

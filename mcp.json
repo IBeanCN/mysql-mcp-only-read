@@ -27,7 +27,8 @@
         "MYSQL_DATABASE": "your_database_name",
         "MYSQL_CONNECT_TIMEOUT": "10",
         "MYSQL_SSL": "false",
-        "QUERY_DEFAULT_LIMIT": "100"
+        "QUERY_DEFAULT_LIMIT": "100",
+        "QUERY_TABLE_BLACKLIST": "sensitive_table,internal_audit_log"
       }
     },
 
