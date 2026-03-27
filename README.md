@@ -2,6 +2,8 @@
 
 A Python MCP (Model Context Protocol) server that provides **readonly** access to a MySQL database.
 
+- Chinese documentation: `README.zh-CN.md`
+
 - Transport: **stdio** (recommended for MCP clients) and **HTTP/SSE** (standalone service)
 - Safety: Only `SELECT`, `SHOW`, `DESCRIBE`, `DESC`, and `EXPLAIN` statements are permitted
 - Config: All parameters are passed via `mcp.json` — no code changes needed to switch databases
@@ -305,9 +307,4 @@ The following improvements are recommended before production use:
 
 ## License
 
-This project is licensed under the Apache License 2.0. See `LICENSE`.
-
-Forking and secondary development are allowed, but attribution is required:
-- Keep the original copyright notice.
-- Keep `NOTICE` (or provide an equivalent attribution notice).
-- Clearly credit the original author: `IBeanCN`.
+This project is licensed under the MIT License. See `LICENSE`.
