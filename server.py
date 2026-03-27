@@ -278,18 +278,17 @@ def validate_table_blacklist_for_sql(sql: str) -> None:
         raise ValueError(
             json.dumps(
                 _bilingual_error_payload(
-                    code="TABLE_DATA_BLOCKED",
+                    code="TABLE_QUERY_BLOCKED",
                     message_en=(
-                        "Data query on blacklisted table(s) is not allowed. "
-                        "Use the describe_table tool to view the table structure."
+                        "The requested table is blocked by QUERY_TABLE_BLACKLIST "
+                        "and cannot be queried."
                     ),
-                    message_zh="黑名单中的表禁止查询数据，如需查看表结构请使用 describe_table 工具。",
+                    message_zh="当前表在查询黑名单中，禁止查询。",
                     blocked_tables=blocked_tables,
                 ),
                 ensure_ascii=False,
             )
         )
-
 
 
 # ── MySQL Connection ───────────────────────────────────────────────────────────
@@ -412,8 +411,6 @@ def describe_table(table_name: str) -> dict[str, Any]:
 
     Args:
         table_name: Name of the table (letters, digits, underscores only).
-                    Blacklisted tables are permitted here — structure inspection
-                    is always allowed even when data queries are blocked.
 
     Returns:
         dict with keys:
