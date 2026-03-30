@@ -346,8 +346,8 @@ def query(sql: str, limit: int = QUERY_DEFAULT_LIMIT) -> dict[str, Any]:
 
     Args:
         sql:   Readonly SQL statement to execute.
-        limit: Maximum rows returned for SELECT queries that have no LIMIT clause.
-               Capped at QUERY_DEFAULT_LIMIT from server config.
+        limit: Upper bound for SELECT row count; min(limit, QUERY_DEFAULT_LIMIT) is applied,
+               and any explicit LIMIT in SQL is rewritten so it cannot exceed that cap.
 
     Returns:
         dict with keys:

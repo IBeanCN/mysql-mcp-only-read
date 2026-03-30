@@ -7,8 +7,8 @@
     "  The client launches server.py as a subprocess and injects MySQL parameters",
     "  via the 'env' section.  No separate server process needed.",
     "",
-    "Option B (sse) - for running the server as a standalone HTTP service:",
-    "  Start the server first:  python server.py --transport sse --port 8000",
+    "Option B (sse) - standalone HTTP service; start with .venv python, e.g.:",
+    "  .venv/bin/python server.py --transport sse --port 8000",
     "  Then point the client at the SSE URL.  MySQL parameters are configured",
     "  at server startup time via environment variables or a shell .env file."
   ],
@@ -16,9 +16,9 @@
   "mcpServers": {
 
     "mysql-readonly-stdio": {
-      "_comment": "Option A: stdio transport.  Client starts the process; env vars carry MySQL config.",
-      "command": "python",
-      "args": ["/ABSOLUTE/PATH/TO/server.py"],
+      "_comment": "Option A: stdio. Use absolute paths. Windows command: ...\\MySQL_MCP\\.venv\\Scripts\\python.exe",
+      "command": "/absolute/path/to/MySQL_MCP/.venv/bin/python",
+      "args": ["/absolute/path/to/MySQL_MCP/server.py"],
       "env": {
         "MYSQL_HOST": "127.0.0.1",
         "MYSQL_PORT": "3306",
